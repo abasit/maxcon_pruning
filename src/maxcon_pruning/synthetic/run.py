@@ -8,12 +8,12 @@ one, so a stopped method restarts with the same command.
   prune            grid, sweep  LO-RANSAC once per instance (lo.jsonl), then Algorithm 1 from the level d + 2 with
                                 LO-RANSAC's set as M0 (prune.jsonl)
   trim             grid, sweep  the trimming at k eps of LO-RANSAC's model (trimming.jsonl)
-  astar-survivors  grid, sweep  A* on the survivors of each pruning line (astar.jsonl)
-  astar-trimmed    grid         A* on each trimmed set
   gore             grid         GORE at its published settings (gore.jsonl); a cell ends after STOP runs in a row in
                                 which every test timed out and nothing was removed
-  astar-gore       grid         A* on what each GORE line leaves
   wi-mbf           grid, sweep  WI and MBF-MaxCon, the authors' MATLAB code at their demo settings (influence.jsonl)
+  astar-survivors  grid, sweep  A* on the survivors of each pruning line (astar.jsonl)
+  astar-trimmed    grid         A* on each trimmed set
+  astar-gore       grid         A* on what each GORE line leaves
   astar-alone      grid         A* on the full instance
   all                           every method above, in this order
 
@@ -27,9 +27,10 @@ import time
 import numpy as np
 
 from .. import astar, common, lo_ransac, prune, trimming
+from ..common import STREAMS
 from ..comparators import gore
 from ..problems import regression
-from .instances import GRID, N, ROOT, STREAMS, SWEEP_NAMES, generate, load, matlab_seed, parse, path
+from .instances import EPS, GRID, N, ROOT, SWEEP_NAMES, generate, load, matlab_seed, parse, path
 
 RES = ROOT / "results"                                  # results/ for the grid, results/sweep/ for the sweep
 STOP = 3                                                # GORE's per-cell stopping rule
@@ -58,11 +59,11 @@ def head(I):
 
 
 def lo_line(I):
-    """LO-RANSAC on one instance: its set, model, trials and time."""
+    """LO-RANSAC on one instance: its set, model, hypotheses and time."""
     t0 = time.perf_counter()
     rng = np.random.default_rng(I["seed"] + [STREAMS["lo_ransac"]])
-    model, S, trials = lo_ransac.regression(I["A"], I["b"], I["epsilon"], rng)
-    return dict(**head(I), m0=len(S), set=S.tolist(), model=model.tolist(), trials=trials,
+    model, S = lo_ransac.run(regression.Problem(I["A"], I["b"], I["epsilon"]), rng)
+    return dict(**head(I), m0=len(S), set=S.tolist(), model=model.tolist(), trials=lo_ransac.TRIALS,
                 seconds=time.perf_counter() - t0)
 
 
@@ -127,8 +128,8 @@ def do_wi_mbf(which):
     if not pending:
         print("influence (authors): nothing pending", flush=True)
         return
-    jobs = [dict(name=nm, file=str(path(nm)), seed_mbf=matlab_seed(nm, "mbf"), seed_wi=matlab_seed(nm, "wi"))
-            for nm in pending]
+    jobs = [dict(name=nm, file=str(path(nm)), problem="linear", eps=EPS, rep=1, seed_mbf=matlab_seed(nm, "mbf"),
+                 seed_wi=matlab_seed(nm, "wi")) for nm in pending]
     f = res / "jobs" / "influence_authors.json"
     common.write_json(f, dict(out=str(res / "influence.jsonl"), jobs=jobs))
     print(f"influence (authors): {len(jobs)} instances -> {f.name}", flush=True)
@@ -152,9 +153,10 @@ def do_astar(arm, which):
     else:
         raise ValueError(arm)
     for c in sorted({cell_of(nm) for nm in names}):
-        group = [(astar.job(nm, a), keep, path(nm)) for nm, a, keep in jobs if cell_of(nm) == c]
-        astar.run_jobs(group, res / "astar.jsonl", path(names[0]), res / "jobs" / f"{arm}_{label(c)}.json",
-                       f"{arm} {label(c)}", one_per_session=arm == "alone" or which == "sweep")
+        group = [dict(name=astar.job(nm, a), file=path(nm), keep=keep, problem="linear", eps=EPS)
+                 for nm, a, keep in jobs if cell_of(nm) == c]
+        astar.run_jobs(group, res / "astar.jsonl", res / "jobs" / f"{arm}_{label(c)}.json", f"{arm} {label(c)}",
+                       one_per_session=arm == "alone" or which == "sweep")
 
 
 def gore_line(I, lo):

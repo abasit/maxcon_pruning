@@ -1,130 +1,83 @@
-"""LO-RANSAC, the source of M0, Algorithm 1's starting consensus set.
+"""LO-RANSAC, the source of M0, the consensus set that Algorithm 1 starts from. One procedure for every problem.
 
-regression() is our Python port of runLoRANSAC.m from Tennakoon et al.'s MBF-MaxCon (CVPR 2021; MIT licence, see
-THIRD_PARTY.md), with the exchange algorithm of myFitTchebycheff.m by Chin, Purkait, Eriksson and Suter (CVPR 2015) as
-its Chebyshev fit. It runs for a fixed wall time, so its result depends on the machine, and the drivers store it once
-per instance. It differs from the MATLAB in two places: a point is an inlier at residual <= eps (the MATLAB has < eps),
-as in the paper's definition of feasibility, and a minimal sample's model is solved exactly, which for d points is the
-same model as their Chebyshev fit.
+The loop is RANSAC: draw a minimal sample, fit its model, count the inliers, and stop after TRIALS hypotheses, the
+budget GORE's paper gives RANSAC (Chin et al., CVPR 2016). RANSAC's adaptive criterion would stop after a handful of
+hypotheses at high inlier ratios, and M0 is the input of the pruning, the trimming and GORE, so a fixed budget keeps
+the comparison even and the result reproducible from the seed. Every hypothesis that beats the best raw inlier count
+so far is locally optimised, the "inner RANSAC with iteration" of Chum, Matas and Kittler (DAGM 2003, their method 5),
+written out by Lebeda, Matas and Chum (BMVC 2012, Algorithms 2 and 3), in the form of runLoRANSAC.m of MBF-MaxCon
+(Tennakoon et al., CVPR 2021, MIT licence, see THIRD_PARTY.md):
+  1. refit on the inliers of the hypothesis;
+  2. REPS times, fit a random half of those inliers, then take ITERS reweighted least-squares steps on the points
+     within a threshold that shrinks from K eps to eps, with weights 1 / |residual|;
+  3. keep the model with the most inliers among all of these.
+REPS, ITERS, K, the half-size inner sample and the 1 / |residual| weights are MBF-MaxCon's. Its stop after 2 s of
+wall time, which depends on the machine, is replaced by the fixed budget.
+
+A problem P supplies n, the inlier threshold eps, the minimal sample size p, and three methods, points 0-based:
+  minimal(S)         the model of a minimal sample S, or None when the sample is degenerate
+  fit(S, w=None)     the model fitted to the points S, weighted by w when given, or None when the fit fails.
+                     Regression: the Chebyshev fit unweighted, weighted least squares with w. Homography: the
+                     normalised DLT, its rows weighted by w
+  residual(model)    the residual of every point under the model, inf where the model does not apply
+A point is an inlier of a model at residual <= eps, as in the paper's definition of feasibility.
 """
-import time
-
 import numpy as np
 
-from .problems.regression import chebyshev, inliers
-
-SECONDS = 2.0                                     # the wall time of the regression LO-RANSAC
-
-
-def steps(gap, rate):
-    """The step lengths gap / rate, with NaN set to 0 and every value <= 0 set to Inf, so that argmin picks the
-    smallest positive step."""
-    t = gap / rate
-    t[np.isnan(t)] = 0
-    t[t <= 0] = np.inf
-    return t
+TRIALS = 10_000                                   # hypotheses per run
+REPS, ITERS, K = 10, 10, 3.0                      # inner samples, reweighted steps per sample, threshold multiplier
 
 
-def exchange(X, Y, xn, itrn):
-    """The body of myFitTchebycheff.m on the doubled system [X; -X], from the start xn. Returns the model."""
-    n0, n = len(Y), X.shape[1]
-    X, Y = np.vstack([X, -X]), np.concatenate([Y, -Y])
-    r = X @ xn - Y
-    d = r.max()
-    M = list(np.flatnonzero(np.abs(r - d) < 1e-9))
-    r[M] = d
-    while len(M) < n + 1:                        # lower the largest residuals together until n + 1 are equal
-        Am = X[M]
-        y = Am.T @ -np.linalg.solve(Am @ Am.T, np.ones(len(M)))
-        lam = steps(d - r, X @ y + 1)
-        j = int(np.argmin(lam))
-        xn = xn + lam[j] * y
-        M.append(j)
-        r = X @ xn - Y
-        d = r.max()
-        r[M] = d
-    if len(M) != n + 1:
-        return chebyshev(X[:n0], Y[:n0])[0]
-    C = np.linalg.inv(np.hstack([np.ones((n + 1, 1)), X[M]]))
-    while (C[0] / np.abs(C[0])).sum() < n and itrn:     # swap out the point with the most negative dual weight
-        p1 = int(np.argmin(C[0]))
-        y = C[1:, p1] / C[0, p1]
-        t = steps(d - r, X @ y + 1)
-        j = int(np.argmin(t))
-        xn = xn + t[j] * y
-        lam = np.concatenate([[1.0], X[j]]) @ C
-        Cb = C[:, p1] / lam[p1]
-        C = C - np.outer(Cb, lam)
-        C[:, p1] = Cb
-        M[p1] = j
-        r = X @ xn - Y
-        d = r.max()
-        r[M] = d
-        itrn -= 1
-    return xn
+def inliers(P, model, th):
+    """The points with residual <= th under the model, none for a model of None."""
+    if model is None:
+        return np.empty(0, np.int64)
+    return np.flatnonzero(P.residual(model) <= th)
 
 
-def cheb_fit(X, Y, rng, itrn=50):
-    """The Chebyshev fit of myFitTchebycheff.m: the exchange algorithm from a random start in [0, 1]^d, falling back to
-    the linear program when the exchange meets a singular matrix."""
-    xn = rng.random(X.shape[1])
-    try:
-        with np.errstate(divide="ignore", invalid="ignore"):
-            return exchange(X, Y, xn, itrn)
-    except np.linalg.LinAlgError:
-        return chebyshev(X, Y)[0]
-
-
-def local_opt(A, b, eps, I, rng):
-    """The local optimisation of runLoRANSAC.m around the inlier set I: a refit, then 10 rounds of a fit to a random
-    half of the inliers and 10 IRLS steps with the threshold shrinking from 3 eps to eps. Returns the best model, its
-    inliers and the number of fits."""
-    theta = cheb_fit(A[I], b[I], rng)
-    base = inliers(A, b, theta, eps)
-    best, fits = (theta, base), 1
-    for _ in range(10):
-        if len(base) == 0:
-            break
-        half = rng.choice(base, size=len(base) // 2, replace=False)
-        theta = cheb_fit(A[half], b[half], rng)
-        fits += 1
-        J = inliers(A, b, theta, eps)
+def local(P, model, I, rng):
+    """The local optimisation of a hypothesis with inliers I, steps 1 to 3 of the module docstring. Returns the best
+    model found and its inliers."""
+    eps = P.eps
+    refit = P.fit(I)
+    best = (refit, inliers(P, refit, eps)) if refit is not None else (model, I)
+    base = best[1]
+    if len(base) // 2 < P.p:                                   # too few inliers for inner samples
+        return best
+    for _ in range(REPS):
+        theta = P.fit(rng.choice(base, size=len(base) // 2, replace=False))
+        if theta is None:
+            continue
+        J = inliers(P, theta, eps)
         if len(J) > len(best[1]):
             best = (theta, J)
-        for s in range(1, 11):
-            L = inliers(A, b, theta, eps * 3 - s * ((3 * eps - eps) / 10))
-            fits += 1
-            with np.errstate(divide="ignore", invalid="ignore"):
-                w = 1.0 / np.abs(A[L] @ theta - b[L])
-                try:
-                    theta = np.linalg.solve(A[L].T @ (w[:, None] * A[L]), A[L].T @ (w * b[L]))
-                except np.linalg.LinAlgError:
-                    theta = np.full(A.shape[1], np.nan)
-        J = inliers(A, b, theta, eps)
+        for i in range(1, ITERS + 1):
+            th = K * eps - i * (K - 1.0) * eps / ITERS          # K eps down to eps
+            L = inliers(P, theta, th)
+            if len(L) < P.p:
+                break
+            r = P.residual(theta)[L]
+            theta_next = P.fit(L, 1.0 / np.maximum(r, 1e-12 * eps))
+            if theta_next is None:
+                break
+            theta = theta_next
+        J = inliers(P, theta, eps)
         if len(J) > len(best[1]):
             best = (theta, J)
-    return best[0], best[1], fits
+    return best
 
 
-def regression(A, b, eps, rng, seconds=SECONDS):
-    """LO-RANSAC on a regression instance for the given seconds of wall time: minimal samples of d points, and the
-    local optimisation at each new best. Returns the model, its inlier set and the number of trials."""
-    n, d = A.shape
-    t0 = time.perf_counter()
-    trials, best, model, I_lo = 0, 0, None, np.array([], dtype=np.int64)
-    while True:
-        S = rng.permutation(n)[:d]
-        try:
-            theta = np.linalg.solve(A[S], b[S])
-        except np.linalg.LinAlgError:
-            theta = np.full(d, np.nan)
-        I = inliers(A, b, theta, eps)
-        trials += 1
-        if len(I) > best:
-            best = len(I)
-            th, J, fits = local_opt(A, b, eps, I, rng)
-            trials += fits
-            if len(J) > len(I_lo):
-                model, I_lo = th, J
-        if seconds < time.perf_counter() - t0:
-            return model, I_lo, trials
+def run(P, rng, trials=TRIALS):
+    """LO-RANSAC on the problem P with the generator rng, `trials` hypotheses. Returns the best model and its inliers
+    (sorted indices)."""
+    n, p, eps = P.n, P.p, P.eps
+    raw, best, model_best = 0, np.empty(0, np.int64), None
+    for _ in range(trials):
+        model = P.minimal(rng.choice(n, size=p, replace=False))
+        I = inliers(P, model, eps)
+        if len(I) > raw:                                       # a new best hypothesis: optimise it locally
+            raw = len(I)
+            theta, J = local(P, model, I, rng)
+            if len(J) > len(best):
+                model_best, best = theta, J
+    return model_best, np.sort(best)

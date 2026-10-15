@@ -10,9 +10,9 @@ Two families, each instance named by its parameters and seeded by the numbers of
   grid   d in DS, t in TS, RUNS instances per cell, out = OUT. d6_t70_r15 has the seed [6, 70, 15].
   sweep  d = SWEEP_D, t = SWEEP_T, out = k EPS for k in SWEEP_KS, RUNS instances per k. k enters the seed in tenths,
          so o1.5_d8_t40_r03 has the seed [15, 8, 40, 3], and each k must be a multiple of 0.1.
-Every other use of randomness on an instance seeds its own generator with the instance's seed plus STREAMS[use]: A*'s
-start x0 (make), LO-RANSAC and the pruning (synthetic/run.py), and WI and MBF-MaxCon, whose MATLAB code gets one
-32-bit number derived from that seed (matlab_seed).
+Every other use of randomness on an instance seeds its own generator with the instance's seed plus STREAMS[use]
+(common.py): A*'s start x0 (make), LO-RANSAC and the pruning (synthetic/run.py), and WI and MBF-MaxCon, whose MATLAB
+code gets one 32-bit number derived from that seed (matlab_seed).
 
 A file holds A, b, epsilon, outlier (the planted outliers, a MATLAB logical), theta (the true model) and x0. The MATLAB
 side (A*, WI and MBF-MaxCon) reads the same files and never reads outlier or theta.
@@ -22,12 +22,13 @@ from pathlib import Path
 import numpy as np
 from scipy.io import loadmat, savemat
 
+from ..common import STREAMS
+
 ROOT = Path(__file__).resolve().parents[3]
 INST = ROOT / "instances"
 N, EPS, OUT = 200, 0.1, 5.0
 DS, TS, RUNS = (4, 6, 8), range(10, 81, 10), range(20)
 SWEEP_D, SWEEP_T, SWEEP_KS = 8, 40, (1.5, 2.0, 5.0, 10.0, 50.0)
-STREAMS = dict(x0=1, lo_ransac=2, prune=3, wi=4, mbf=5)    # appended to a seed; not 0, numpy pads short seeds with 0
 
 
 def name(d, t, run):

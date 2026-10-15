@@ -2,8 +2,9 @@
 
 ## MBF-MaxCon (Tennakoon et al., CVPR 2021)
 
-`src/maxcon_pruning/lo_ransac.py` is a Python port of `ransac/runLoRANSAC.m` and `utils/myFitTchebycheff.m` from
-https://github.com/RuwanT/MBF-MaxCon (commit `1661bf8`), released under this licence:
+`src/maxcon_pruning/lo_ransac.py` follows the local optimisation of `ransac/runLoRANSAC.m` (its steps, repetitions,
+reweighting and shrinking threshold) from https://github.com/RuwanT/MBF-MaxCon (commit `1661bf8`), released under this
+licence:
 
 ```
 MIT License
@@ -28,7 +29,3 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
-
-`myFitTchebycheff.m` carries the header of T.-J. Chin, P. Purkait, A. Eriksson and D. Suter, "Efficient Globally
-Optimal Consensus Maximisation with Tree Search", CVPR 2015 (copyright (c) 2015 Pulak Purkait), which asks that work
-using it cite that paper.

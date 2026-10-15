@@ -8,7 +8,7 @@ value of its (d + 1)-point subsets. Larger sets get one linear program each (HiG
 that fails, counts as feasible and gives no model, so a test that cannot decide never removes a point.
 
 Problem holds an instance and the methods the other modules call: test, cover, grow and decide for the pruning
-(prune.py), residual for the trimming, and gore for GORE.
+(prune.py), minimal, fit and residual for LO-RANSAC (lo_ransac.py), residual for the trimming, and gore for GORE.
 """
 from itertools import combinations
 
@@ -116,6 +116,25 @@ class Problem:
             else:
                 feasible[i] = False
         return feasible, np.array(models).reshape(-1, d)
+
+    def minimal(self, S):
+        """The model through the p points S, solved exactly, or None when they are degenerate."""
+        try:
+            return np.linalg.solve(self.A[S], self.b[S])
+        except np.linalg.LinAlgError:
+            return None
+
+    def fit(self, S, w=None):
+        """The Chebyshev fit of the points S (the linear program), or with weights w the weighted least-squares fit,
+        each row scaled by sqrt(w); None when the program fails."""
+        S = np.asarray(S, int)
+        if w is None:
+            try:
+                return chebyshev(self.A[S], self.b[S])[0]
+            except RuntimeError:
+                return None
+        sw = np.sqrt(w)
+        return np.linalg.lstsq(self.A[S] * sw[:, None], self.b[S] * sw, rcond=None)[0]
 
     def residual(self, theta):
         """The residual |a_i . theta - b_i| of every point under one model."""

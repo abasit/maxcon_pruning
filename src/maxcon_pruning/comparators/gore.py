@@ -45,32 +45,36 @@ def test(G, h, owner, alive, k, ubar, M, cap, gauge=None):
     """One test of point k: Gurobi on one thread, seed 0, at most cap seconds, stopping at the first solution. Returns
     the status ('removed', 'incumbent', 'timeout' or 'error'), the incumbent's theta or None, the seconds (building
     the model included) and the branch-and-bound nodes. DualReductions 0 makes Gurobi report an infeasible program as
-    infeasible rather than as infeasible or unbounded."""
+    infeasible rather than as infeasible or unbounded. A Gurobi error, such as a model larger than a size-limited
+    licence allows, is printed and counts as 'error'."""
     t0 = time.perf_counter()
     A, lo, up, p, nz = program(G, h, owner, alive, k, ubar, M, gauge)
-    m = gp.Model()
-    for opt, val in (("OutputFlag", 0), ("Threads", 1), ("Seed", 0), ("TimeLimit", cap), ("SolutionLimit", 1),
-                     ("DualReductions", 0)):
-        m.setParam(opt, val)
-    x = m.addMVar(p, lb=-gp.GRB.INFINITY, ub=gp.GRB.INFINITY)
-    z = m.addMVar(nz, vtype=gp.GRB.BINARY, obj=1.0)
-    v = gp.MVar.fromlist(list(x.tolist()) + list(z.tolist()))
-    fin_up, fin_lo = np.isfinite(up), np.isfinite(lo)
-    if fin_up.any():
-        m.addMConstr(A[fin_up], v, "<", up[fin_up])
-    if fin_lo.any():
-        m.addMConstr(A[fin_lo], v, ">", lo[fin_lo])
-    m.optimize()
-    theta = None
-    if m.Status == gp.GRB.INFEASIBLE:
-        status = "removed"
-    elif m.SolCount > 0:
-        status, theta = "incumbent", np.asarray(x.X)
-    elif m.Status == gp.GRB.TIME_LIMIT:
-        status = "timeout"
-    else:
+    m, theta, nodes = gp.Model(), None, 0
+    try:
+        for opt, val in (("OutputFlag", 0), ("Threads", 1), ("Seed", 0), ("TimeLimit", cap), ("SolutionLimit", 1),
+                         ("DualReductions", 0)):
+            m.setParam(opt, val)
+        x = m.addMVar(p, lb=-gp.GRB.INFINITY, ub=gp.GRB.INFINITY)
+        z = m.addMVar(nz, vtype=gp.GRB.BINARY, obj=1.0)
+        v = gp.MVar.fromlist(list(x.tolist()) + list(z.tolist()))
+        fin_up, fin_lo = np.isfinite(up), np.isfinite(lo)
+        if fin_up.any():
+            m.addMConstr(A[fin_up], v, "<", up[fin_up])
+        if fin_lo.any():
+            m.addMConstr(A[fin_lo], v, ">", lo[fin_lo])
+        m.optimize()
+        nodes = int(m.NodeCount)
+        if m.Status == gp.GRB.INFEASIBLE:
+            status = "removed"
+        elif m.SolCount > 0:
+            status, theta = "incumbent", np.asarray(x.X)
+        elif m.Status == gp.GRB.TIME_LIMIT:
+            status = "timeout"
+        else:
+            status = "error"
+    except gp.GurobiError as e:
+        print(f"GORE: Gurobi error on point {k}: {e}", flush=True)
         status = "error"
-    nodes = int(m.NodeCount)
     m.dispose()
     return status, theta, time.perf_counter() - t0, nodes
 
@@ -92,8 +96,8 @@ def run(P, model, m0, T, M, cap):
             m = max(m, int((verify(theta) & alive).sum()))
         tests.append([k, status, round(secs, 3), nodes])
     removed = sorted(x[0] for x in tests if x[1] == "removed")
-    return dict(n=n, M=M, cap=cap, m0=m0, m0_final=m, candidates=len(cand), tests=tests, removed=removed,
-                n_removed=len(removed), timeouts=sum(x[1] == "timeout" for x in tests),
+    return dict(n=n, T=T, M=M, cap=cap, m0=m0, m0_final=m, candidates=len(cand), tests=tests,
+                removed=removed, n_removed=len(removed), timeouts=sum(x[1] == "timeout" for x in tests),
                 incumbents=sum(x[1] == "incumbent" for x in tests), errors=sum(x[1] == "error" for x in tests),
                 at_limit=bool(tests) and not removed and all(x[1] == "timeout" for x in tests),
                 seconds=time.perf_counter() - t0)

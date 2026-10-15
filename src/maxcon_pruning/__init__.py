@@ -1,1 +1,1 @@
-"""Degree pruning for maximum consensus (prune.py), and the experiments of the paper (synthetic/)."""
+"""Degree pruning for maximum consensus (prune.py), and the experiments of the paper (synthetic/ and real/)."""

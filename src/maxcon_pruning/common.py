@@ -1,5 +1,5 @@
 """Small helpers for the drivers and astar.py: the results files (JSON Lines), the MATLAB job lists (JSON) and the
-MATLAB sessions that run them, and seeds from an instance's name."""
+MATLAB sessions that run them, and the seeds of the random streams."""
 import json
 import os
 import subprocess
@@ -9,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]         # the project folder, which holds matlab/ and external/
 MATLAB = os.environ.get("MATLAB", "matlab")        # the MATLAB executable; set MATLAB to its full path if not on PATH
 SLACK = 300.0                                      # a session's allowance beyond the time its jobs may take
+STREAMS = dict(x0=1, lo_ransac=2, prune=3, wi=4, mbf=5)    # appended to a seed; not 0, numpy pads short seeds with 0
 
 
 def read(path):
@@ -23,10 +24,10 @@ def append(path, rec):
         f.write(json.dumps(rec) + "\n")
 
 
-def seed(nm, k):
-    """A seed for np.random.default_rng from an instance's name and a purpose k: [crc32(name), k]. The synthetic
-    instances use their own seeds (synthetic/instances.py)."""
-    return [zlib.crc32(nm.encode()), k]
+def seed(name, use, *more):
+    """The seed of a real instance's stream for a use: [crc32(name), STREAMS[use], *more]. The name is hashed to a
+    32-bit number because it has no numbers of its own; a synthetic instance's seed is the numbers of its name."""
+    return [zlib.crc32(name.encode()), STREAMS[use], *more]
 
 
 def write_json(path, obj):
