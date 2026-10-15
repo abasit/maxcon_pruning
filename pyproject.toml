@@ -1,0 +1,17 @@
+[project]
+name = "maxcon-pruning"
+version = "0.1.0"
+description = "Degree pruning for maximum consensus: Algorithm 1 and the experiments of the paper"
+authors = [
+    { name = "Anonymous" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "gurobipy>=13.0.3",
+    "numpy>=2.5.4",
+    "scipy>=1.18.1",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.19,<0.13.0"]
+build-backend = "uv_build"
