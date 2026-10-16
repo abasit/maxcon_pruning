@@ -13,7 +13,7 @@ method restarts with the same command.
                    of at most 15 s (gore_tests.jsonl)
   gore-cap         GORE given t as longer tests: 10 tests of at most max(15 s, t / 10) (gore_cap.jsonl)
   wi-mbf           WI and MBF-MaxCon, the authors' MATLAB code at their demo settings, N repetitions per instance
-                   (default REPEATS; influence.jsonl), then each method's consensus per instance
+                   (default REPEATS; influence.jsonl), then a summary against the optimal set A* found
   astar-survivors  A* on the survivors of each pruning line (astar.jsonl)
   astar-trimmed    A* on each trimmed set
   astar-gore       A* on what each GORE line leaves
@@ -27,9 +27,10 @@ labelled instances only.
 
 A* (matlab/astar_jobs.m) starts from LO-RANSAC's model and runs each job in a MATLAB session of its own under the
 watchdog. astar-alone takes the instances by their number of LO-RANSAC outliers, fewest first, and a dataset ends
-after astar.STOP runs in a row at the limit. WI and MBF-MaxCon (matlab/influence_jobs.m) run one MATLAB session per
-instance. On a homography their feasibility test is our L-infinity program, so their returned sets are scored in
-the problem's own residual (score).
+after astar.STOP runs in a row at the limit. WI and MBF-MaxCon (matlab/influence_jobs.m) run unmodified, one MATLAB
+session per instance, with our L-infinity program as their feasibility oracle on a homography, so a returned set need
+not be L2-feasible. wi-mbf reports each returned set against the optimal set A* found: its size, the points of the
+optimal set it lacks, the points outside that set it keeps, and whether our test confirms it L2-feasible.
 """
 import argparse
 import math
@@ -180,24 +181,53 @@ def matlab_seed(name, use, rep):
     return int(np.random.SeedSequence(common.seed(name, use, rep)).generate_state(1)[0])
 
 
-def score(P, S):
-    """The consensus size a returned set S stands for in the problem's own residual: its size when our test finds it
-    feasible (or it has at most p points), else the largest consensus set grown from the models fitted to it, the
-    problem's fit and the model of its feasibility program when that is solved."""
-    S = np.asarray(S, int)
-    if len(S) <= P.p or P.decide(S) == "feasible":
-        return len(S)
-    best = 0
-    for M in [P.fit(S), *P.test(S[None, :])[1]]:
-        if M is not None:
-            best = max(best, len(P.grow(np.flatnonzero(P.residual(M) <= P.eps), M, np.arange(P.n))[0]))
-    return best
+def optimal_set(dataset, name):
+    """The optimal set of an instance as A* found it (0-based indices): the set of a finished A* line, one not in
+    error and not at the limit, on the full instance if that finished, else on the survivors (an optimum of the full
+    instance with probability at least 1 - DELTA); None when neither finished."""
+    runs = astar.runs(RES / dataset / "astar.jsonl")
+    for arm in ("alone", "surv"):
+        a = runs.get(astar.job(name, arm))
+        if a is not None and "error" not in a and not a["hit_limit"]:
+            return set(a["set"])
+    return None
+
+
+def wi_mbf_summary(dataset, repeats):
+    """Per instance and method, over the repetitions 1 to `repeats` (the first line of each): the size of the returned
+    set (survivors), the points of the optimal set it lacks (inliers removed) and the points outside the optimal set
+    it keeps (outliers left), each as min / median / max, a dash for the two counts when no optimal set is known; how
+    many returned sets our test confirms L2-feasible (decide's 'feasible': the program's own model keeps every
+    returned match within eps; undecided counts as not confirmed); the median time. Nothing is written: the tables
+    recompute these from the records."""
+    lines = {}
+    for r in read(dataset, "influence.jsonl"):
+        lines.setdefault((r["name"], r["method"], r["rep"]), r)
+    stats = lambda v: f"{min(v)} / {np.median(v):g} / {max(v)}"                      # noqa: E731
+    for nm in DATASETS[dataset]:
+        P, opt = None, optimal_set(dataset, nm)
+        for method in ("WI", "MBF"):
+            L = [r for (n, m, j), r in sorted(lines.items()) if n == nm and m == method and j <= repeats]
+            ok = [r for r in L if "error" not in r]
+            if not ok:
+                if L:
+                    print(f"{nm} {method}: {len(L)} repetitions, all in error", flush=True)
+                continue
+            P = P or problem(load(dataset, nm))
+            ret = [set(r["returned"]) for r in ok]
+            removed = stats([len(opt - S) for S in ret]) if opt is not None else "-"
+            left = stats([len(S - opt) for S in ret]) if opt is not None else "-"
+            confirmed = sum(P.decide(np.asarray(sorted(S))) == "feasible" for S in ret)
+            print(f"{nm} {method}: {len(L)} repetitions ({len(L) - len(ok)} in error), survivors "
+                  f"{stats([len(S) for S in ret])}, inliers removed {removed}, outliers left {left}, confirmed "
+                  f"L2-feasible {confirmed} of {len(ok)}, median {np.median([r['seconds'] for r in ok]):.1f} s",
+                  flush=True)
 
 
 def do_wi_mbf(dataset, repeats):
     """WI and MBF-MaxCon, the authors' code: the repetitions 1 to `repeats` of each instance that lack a line of
-    either method, one MATLAB session per instance under the watchdog. Then, per instance and method, the returned
-    set's size and its consensus (score) over the repetitions (the first line of each), and the time."""
+    either method, one MATLAB session per instance under the watchdog; then the summary against the optimal set
+    (wi_mbf_summary)."""
     out = RES / dataset / "influence.jsonl"
     done = {(r["name"], r["method"], r["rep"]) for r in common.read(out)}
     for nm in DATASETS[dataset]:
@@ -211,21 +241,7 @@ def do_wi_mbf(dataset, repeats):
         common.write_json(f, dict(out=str(out), jobs=jobs))
         print(f"WI and MBF-MaxCon: {nm}, {len(jobs)} repetitions -> {f.name}", flush=True)
         common.session(f, "influence_jobs", timeout=REP_SECONDS * len(jobs) + common.SLACK)
-    lines = {}
-    for r in common.read(out):
-        lines.setdefault((r["name"], r["method"], r["rep"]), r)
-    for nm in DATASETS[dataset]:
-        P = None
-        for method in ("WI", "MBF"):
-            L = [r for (n, m, j), r in sorted(lines.items()) if n == nm and m == method and j <= repeats]
-            if not L:
-                continue
-            ok = [r for r in L if "error" not in r]
-            P = P or problem(load(dataset, nm))
-            cs = [score(P, r["returned"]) for r in ok]
-            summary = (f"returned {np.mean([r['size'] for r in ok]):.1f}, consensus {np.mean(cs):.1f} ({min(cs)} to "
-                       f"{max(cs)}), {np.mean([r['seconds'] for r in ok]):.1f} s") if ok else "no result"
-            print(f"{nm} {method}: {len(L)} repetitions, {len(L) - len(ok)} errors, {summary}", flush=True)
+    wi_mbf_summary(dataset, repeats)
 
 
 def do_astar(dataset, arm):

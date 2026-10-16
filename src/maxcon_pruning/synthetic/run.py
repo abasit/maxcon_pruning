@@ -17,8 +17,9 @@ one, so a stopped method restarts with the same command.
   astar-alone      grid         A* on the full instance
   all                           every method above, in this order
 
-A* (matlab/astar_jobs.m) runs one MATLAB session per cell. For astar-alone, and on the sweep, it runs one session per
-job under the watchdog, and a cell ends after astar.STOP runs in a row at the limit.
+A* (matlab/astar_jobs.m) runs one MATLAB session per cell, under a watchdog that ends a job running past the limit.
+For astar-alone, and on the sweep, it runs one session per job, and a cell ends after astar.STOP runs in a row at
+the limit.
 """
 import math
 import sys
@@ -174,6 +175,8 @@ def gore_line(I, lo):
 
 
 def do_gore(which):
+    """GORE on every instance with a LO-RANSAC line, cell by cell under the stopping rule. A run in which Gurobi
+    raised, as when its licence is missing, is printed but not recorded, so it runs again next time."""
     names, res, cell_of, label = space(which)
     los = {r["name"]: r for r in read(which, "lo.jsonl")}
     lines = read(which, "gore.jsonl")
@@ -184,12 +187,15 @@ def do_gore(which):
         if nm in done or nm not in los or astar.stopped(cell, STOP):
             continue
         r = gore_line(load(nm), los[nm])
-        append(which, "gore.jsonl", r)
-        lines.append(r)
         print(f"{nm}: m0 {r['m0']} -> {r['m0_final']}, {len(r['tests'])} of {r['candidates']} candidates tested, "
               f"removed {r['n_removed']} ({r['inliers_removed']} planted inliers), time-outs {r['timeouts']}, "
               f"incumbents {r['incumbents']}, {r['seconds']:.1f} s{', AT THE LIMIT' if r['at_limit'] else ''}",
               flush=True)
+        if r["gurobi_errors"]:
+            print(f"{nm}: not recorded, Gurobi raised in {r['gurobi_errors']} tests", flush=True)
+            continue
+        append(which, "gore.jsonl", r)
+        lines.append(r)
 
 
 METHODS = {                                     # method: (what it runs, the instance sets), in the order of `all`

@@ -50,8 +50,12 @@ def session(jobfile, script, timeout=None, watch=None):
         return watch.stat().st_size if watch is not None and watch.exists() else 0
 
     last, seen = time.monotonic(), size()
-    while proc.poll() is None:
-        time.sleep(POLL)
+    while True:
+        try:
+            proc.wait(timeout=POLL)                    # returns as soon as MATLAB exits
+            break
+        except subprocess.TimeoutExpired:
+            pass
         if size() != seen:
             last, seen = time.monotonic(), size()
         if timeout is not None and time.monotonic() - last > timeout:

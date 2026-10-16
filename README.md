@@ -18,6 +18,7 @@ src/maxcon_pruning/
   common.py                result files, MATLAB sessions, seeds
   synthetic/instances.py   the synthetic instances and their seeds
   synthetic/run.py         the synthetic experiment, one method per command
+  synthetic/tables.py      the synthetic tables, from the results
   real/instances.py        the real datasets and the problem of each instance
   real/run.py              the real-data experiment, one method per command
 instances/                 the instance files: the synthetic ones once generated, the real ones in real/<dataset>/
@@ -74,9 +75,19 @@ Results go to `results/` (grid) and `results/sweep/`, one JSON line per instance
 already have a line, so a stopped method restarts with the same command. Each method needs the ones above it in the
 table that it reads from.
 
-Rough times on an Apple M4: `prune` 2 to 2.5 h, `wi-mbf` about 15 min, `gore` probably 5 to 15 h, the A* runs on
-survivors, trimmed sets and GORE's output seconds each, and `astar-alone` days (a run stops at 3,500 s, and three runs
-in a row at that limit end a cell). Gurobi and MATLAB run on one thread; run one method at a time if the times matter.
+Times on an Apple M4 in the run of record: `prune` 2.2 h, `gore` 9.2 h, `wi-mbf` 6 min, the A* runs on survivors,
+trimmed sets and GORE's output about 11 min in all on the grid, and `astar-alone` days (a run stops at 3,500 s, and
+three runs in a row at that limit end a cell). Gurobi and MATLAB run on one thread; run one method at a time if the
+times matter.
+
+The tables come from the results at any point of a run, with a dash for what is not there yet:
+
+```bash
+uv run python -m maxcon_pruning.synthetic.tables
+```
+
+writes to `results/tables/` a CSV with one row per instance and every number, the grid's tables per cell (the
+pruning with A*, the trimming, WI and MBF-MaxCon, GORE) and the sweep's per instance, in LaTeX and in markdown.
 
 ## Running the real-data experiment
 
@@ -106,9 +117,9 @@ a larger N later only runs the missing starts or repetitions. GORE and A* use st
 such as a model too large for the pip licence, is printed but not recorded, so it runs again next time. A* starts from
 LO-RANSAC's homography and runs each job in a MATLAB session of its own; `astar-alone` takes the pairs by their number
 of LO-RANSAC outliers, fewest first, and stops a dataset after three runs in a row at the 3,500 s limit. On a
-homography, WI and MBF-MaxCon test feasibility with our L-infinity program, so `wi-mbf` scores their returned sets in
-the L2 transfer error: a set's size when our test finds it feasible, else the largest consensus set grown from the
-models fitted to it.
+homography, WI and MBF-MaxCon run unmodified with our L-infinity program as their feasibility oracle, so a returned
+set need not be L2-feasible; `wi-mbf` reports each returned set against the optimal set A* found: its size, the points
+of the optimal set it lacks, the points outside that set it keeps, and whether our check confirms it L2-feasible.
 
 Rough times on an Apple M4 for city and adam together: 38 s per start of `prune`, `gore` 96 s, and A* on the
 survivors seconds; `gore-tests` and `gore-cap` take about as long as the pruning, or as `gore` when that is longer.
