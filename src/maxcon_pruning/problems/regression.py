@@ -3,9 +3,11 @@ some model theta keeps every residual |a_i . theta - b_i| within eps. Its Chebys
 residual any model achieves, so the set is feasible when its value is at most eps.
 
 The feasibility test is closed form for sets of d + 1 to d + 3 points. The value of d + 1 points is |b . v| / |v|_1,
-for v spanning the vectors orthogonal to the columns of A on those points, and the value of a larger set is the largest
-value of its (d + 1)-point subsets. Larger sets get one linear program each (HiGHS). A degenerate set, or a program
-that fails, counts as feasible and gives no model, so a test that cannot decide never removes a point.
+for v spanning the vectors orthogonal to the columns of A on those points, and the value of a larger set is the
+largest value of its (d + 1)-point subsets. Larger sets get one linear program each (HiGHS). A set counts as
+infeasible only when its value exceeds eps by more than the relative tolerance TOL, which covers the solver's own
+tolerance; a value within it, a degenerate set or a program that fails counts as feasible, and only a decided set
+gives a model, so a test that cannot decide never removes a point.
 
 Problem holds an instance and the methods the other modules call: test, cover, grow and decide for the pruning
 (prune.py), minimal, fit and residual for LO-RANSAC (lo_ransac.py), residual for the trimming, and gore for GORE.
@@ -16,6 +18,7 @@ import numpy as np
 from scipy.optimize import linprog
 
 GROW_MAX = 10                                     # line 6 of Algorithm 1: refits per growth at most
+TOL = 1e-6                                        # relative tolerance on eps of the infeasibility decisions
 
 
 def chebyshev(A, b):
@@ -102,7 +105,7 @@ class Problem:
         A, b, eps, d = self.A, self.b, self.eps, self.p
         if S.shape[1] <= d + 3:
             vals, bad, out, v = closed_form(A, b, S)
-            feasible = vals <= eps                                      # a degenerate set has the value 0
+            feasible = vals <= eps * (1 + TOL)                          # a degenerate set has the value 0
             f = feasible & ~bad
             return feasible, (cf_models(A, b, S[f], out[f], v[f]) if f.any() else np.empty((0, d)))
         feasible, models = np.ones(len(S), bool), []
@@ -111,7 +114,7 @@ class Problem:
                 theta, value = chebyshev(A[Si], b[Si])
             except RuntimeError:
                 continue                                                # a failed program counts as feasible
-            if value <= eps:
+            if value <= eps * (1 + TOL):
                 models.append(theta)
             else:
                 feasible[i] = False
@@ -151,11 +154,16 @@ class Problem:
         return grow(self.A, self.b, self.eps, cover, model, alive)
 
     def decide(self, X):
-        """One linear program on the points X: 'feasible', 'infeasible', or 'undecided' when the program fails."""
+        """One linear program on the points X: 'feasible' when its model keeps every residual of X within eps,
+        recomputed; 'infeasible' when its value exceeds eps by more than TOL; else, or when the program fails,
+        'undecided'."""
         try:
-            return "feasible" if chebyshev(self.A[X], self.b[X])[1] <= self.eps else "infeasible"
+            theta, value = chebyshev(self.A[X], self.b[X])
         except RuntimeError:
             return "undecided"
+        if np.all(np.abs(self.A[X] @ theta - self.b[X]) <= self.eps):
+            return "feasible"
+        return "infeasible" if value > self.eps * (1 + TOL) else "undecided"
 
     def gore(self, theta):
         """The instance as GORE takes it (comparators/gore.py): point i as the rows a_i theta <= b_i + eps and

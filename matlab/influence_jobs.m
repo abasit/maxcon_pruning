@@ -48,8 +48,8 @@ for i = 1:numel(jobs)
                 r.seconds = toc(t0);
             end
             fixed = sort(fixed(:))';
-            r.removed = fixed - 1; r.n_removed = numel(fixed);
-            r.returned = setdiff(1:nbits, fixed) - 1; r.size = numel(r.returned);
+            r.removed = num2cell(fixed - 1); r.n_removed = numel(fixed);        % num2cell: a list even of one
+            r.returned = num2cell(setdiff(1:nbits, fixed) - 1); r.size = numel(r.returned);
             fprintf('%s %s rep %d: returned %d, removed %d, %.2f s\n', J.name, m, J.rep, r.size, r.n_removed, ...
                 r.seconds);
         catch e

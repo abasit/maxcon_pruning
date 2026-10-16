@@ -2,10 +2,11 @@
 
 run() works in rounds on the remaining points. A round at level s draws uniform s-subsets in batches of BATCH, tests
 each for feasibility, and counts for every point the samples through it and the feasible ones. After every batch it
-replaces M0 by any larger consensus set that a feasible sample's model gives (line 6), and marks for removal every
-point whose degree Robbins' mixture bound puts below the threshold tau_s(m0) (line 7). The level rule then says whether
-the next round stays at s, rises to s + 1 or stops. Each remaining point outside M0 is tested on its own (line 14), and
-one feasibility test on the survivors bounds the optimum. With probability at least 1 - DELTA no point of a maximum
+replaces M0 by a larger consensus set when the feasible samples' models give one (line 6: the model whose consensus
+set among the remaining points is largest, refitted and grown), and marks for removal every point whose degree
+Robbins' mixture bound puts below the threshold tau_s(m0) (line 7). The level rule then says whether the next round
+stays at s, rises to s + 1 or stops. Each remaining point outside M0 is tested on its own (line 14), and one
+feasibility test on the survivors bounds the optimum. With probability at least 1 - DELTA no point of a maximum
 consensus set is removed, whatever the batch size and the stopping rules (the paper's pruning theorem).
 
 The problem P supplies P.n and four methods, with point indices 0-based into the full instance:
@@ -70,14 +71,16 @@ def level_rule(n, removed, end, capped, T_next):
     return "stay"
 
 
-def largest_consensus(P, models):
-    """Line 6: the largest consensus set over all n points among the models, and its model (the first with that
-    size); None without models."""
+def largest_consensus(P, models, alive):
+    """Line 6: the model whose consensus set among the points alive is largest (the first with that size), as its
+    consensus set over all n points, the size of that set among the points alive, and the model; None without
+    models."""
     if not len(models):
         return None
     R = P.cover(models)
-    j = int(np.argmax(R.sum(axis=0)))
-    return np.flatnonzero(R[:, j]), models[j]
+    size = R[alive].sum(axis=0)
+    j = int(np.argmax(size))
+    return np.flatnonzero(R[:, j]), int(size[j]), models[j]
 
 
 def one_round(P, alive, M0, model, s, l, rng):
@@ -97,9 +100,9 @@ def one_round(P, alive, M0, model, s, l, rng):
         feasible, models = P.test(alive[sets])
         Ti += np.bincount(sets.ravel(), minlength=k)
         Yi += np.bincount(sets[feasible].ravel(), minlength=k)
-        best = largest_consensus(P, models)
-        if best is not None and len(best[0]) > len(M0):
-            G, gm = P.grow(best[0], best[1], alive)[:2]
+        best = largest_consensus(P, models, alive)
+        if best is not None and best[1] > len(M0):
+            G, gm = P.grow(best[0], best[2], alive)[:2]
             if len(G) > len(M0):
                 M0, model, adopted = G, gm, True
         T, tau = round_size(len(M0), k, s, dl), threshold(len(M0), k, s)

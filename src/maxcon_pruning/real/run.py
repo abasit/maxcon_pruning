@@ -146,8 +146,8 @@ def do_gore(dataset, variant=None):
     (variant None) the dataset ends after STOP runs in a row at the limit. The variants give GORE Algorithm 1's own
     time t (prune_seconds of start 1), never less than the published settings, and have no stopping rule: 'tests'
     runs max(GORE_TESTS, ceil(t / GORE_CAP)) tests of at most GORE_CAP, 'cap' GORE_TESTS tests of at most
-    max(GORE_CAP, t / GORE_TESTS). A run with a Gurobi error, such as an instance too large for a size-limited
-    licence, is printed but not recorded, so it runs again next time."""
+    max(GORE_CAP, t / GORE_TESTS). A run in which Gurobi raised, as for an instance too large for a size-limited
+    licence, is printed but not recorded, so it runs again next time; any other error is recorded."""
     fname = "gore.jsonl" if variant is None else f"gore_{variant}.jsonl"
     los, prs = first(dataset, "lo.jsonl"), first(dataset, "prune.jsonl")
     done = {r["name"]: r for r in read(dataset, fname)}
@@ -168,8 +168,8 @@ def do_gore(dataset, variant=None):
               f"(T {T}, cap {cap:.1f} s), removed {r['n_removed']}, time-outs {r['timeouts']}, incumbents "
               f"{r['incumbents']}, errors {r['errors']}, {r['seconds']:.1f} s"
               f"{', AT THE LIMIT' if r['at_limit'] else ''}", flush=True)
-        if r["errors"]:
-            print(f"{nm}: not recorded, {r['errors']} tests ended in an error", flush=True)
+        if r["gurobi_errors"]:
+            print(f"{nm}: not recorded, Gurobi raised in {r['gurobi_errors']} tests", flush=True)
             continue
         append(dataset, fname, r)
         done[nm] = r

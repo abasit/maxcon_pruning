@@ -2,13 +2,16 @@
 MATLAB sessions that run them, and the seeds of the random streams."""
 import json
 import os
+import signal
 import subprocess
+import time
 import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]         # the project folder, which holds matlab/ and external/
 MATLAB = os.environ.get("MATLAB", "matlab")        # the MATLAB executable; set MATLAB to its full path if not on PATH
 SLACK = 300.0                                      # a session's allowance beyond the time its jobs may take
+POLL = 5.0                                         # seconds between the watchdog's checks
 STREAMS = dict(x0=1, lo_ransac=2, prune=3, wi=4, mbf=5)    # appended to a seed; not 0, numpy pads short seeds with 0
 
 
@@ -36,12 +39,26 @@ def write_json(path, obj):
     path.write_text(json.dumps(obj))
 
 
-def session(jobfile, script, timeout=None):
-    """One MATLAB session running matlab/<script>.m on a job list, on one thread, killed after `timeout` seconds (the
-    watchdog). Returns MATLAB's exit code, or 'killed'."""
+def session(jobfile, script, timeout=None, watch=None):
+    """One MATLAB session running matlab/<script>.m on a job list, on one thread, in a process group of its own. The
+    watchdog kills the group once `timeout` seconds pass without progress: since the start, or, with `watch` (the
+    results file the session appends to), since its last new line. Returns MATLAB's exit code, or 'killed'."""
     cmd = [MATLAB, "-singleCompThread", "-batch", f"addpath('{ROOT / 'matlab'}'); {script}('{jobfile}')"]
-    try:
-        return subprocess.run(cmd, timeout=timeout).returncode
-    except subprocess.TimeoutExpired:
-        print(f"watchdog: the session outlived its allowance of {timeout:.0f} s and was killed", flush=True)
-        return "killed"
+    proc = subprocess.Popen(cmd, start_new_session=True)
+
+    def size():
+        return watch.stat().st_size if watch is not None and watch.exists() else 0
+
+    last, seen = time.monotonic(), size()
+    while proc.poll() is None:
+        time.sleep(POLL)
+        if size() != seen:
+            last, seen = time.monotonic(), size()
+        if timeout is not None and time.monotonic() - last > timeout:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.wait()
+            print(f"watchdog: the session made no progress for {timeout:.0f} s and was killed", flush=True)
+            return "killed"
+    if proc.returncode:
+        print(f"MATLAB exited with code {proc.returncode} ({script} on {jobfile})", flush=True)
+    return proc.returncode

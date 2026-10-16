@@ -6,7 +6,8 @@ keep, problem ('linear' or 'homography'), eps and, for a homography, init (the i
 Its name is '<instance>_<arm>', the arm without underscores: surv (on the survivors), alone (on the full instance),
 k2, k3, k5 (on the trimmed sets) and gore (on what GORE leaves). A run at the limit is not finished and gives no
 consensus size. A* checks its limit only between nodes, and a single node has run for hours, so every session has a
-watchdog that kills it after its allowance. A job alone in a killed session then gets a line at the limit.
+watchdog that kills it when no job has finished within the limit plus the slack; the job it was running then gets
+a line at the limit, and the session starts again on the jobs left.
 """
 import time
 from pathlib import Path
@@ -22,13 +23,19 @@ def job(name, arm):
 
 
 def at_limit(a):
-    """True for an A* line at its limit or in error: a run with no answer."""
-    return a is not None and ("error" in a or a["hit_limit"])
+    """True for an A* line at its limit (or killed there by the watchdog): a run with no answer. A line in error is
+    not at the limit; its job runs again."""
+    return a is not None and "error" not in a and bool(a["hit_limit"])
 
 
 def runs(out):
     """The A* lines of a results file by job name (the last line of a name wins)."""
     return {r["name"]: r for r in read(out)}
+
+
+def finished(out):
+    """The names of the jobs with a line not in error, so that a job whose line is in error runs again."""
+    return {nm for nm, r in runs(out).items() if "error" not in r}
 
 
 def stopped(flags, stop=STOP):
@@ -53,18 +60,27 @@ def killed_line(out, name, n, elapsed):
 
 
 def run_jobs(jobs, out, listfile, label, one_per_session=False, stop=STOP):
-    """A* on the jobs of one group, in order, skipping those with a line in out. One session runs every pending job;
-    with one_per_session each job runs in a session of its own under the watchdog, and the group ends once `stop`
-    jobs in a row are at the limit (never with stop None)."""
-    done = runs(out)
+    """A* on the jobs of one group, in order, skipping those with a line in out not in error. One session runs every
+    pending job, the watchdog counting from its last line; with one_per_session each job runs in a session of its
+    own, and the group ends once `stop` jobs in a row are at the limit (never with stop None)."""
+    done = finished(out)
     pending = [j for j in jobs if j["name"] not in done]
     if not pending:
         print(f"A* {label}: nothing pending", flush=True)
         return
     print(f"A* {label}: {len(pending)} jobs pending", flush=True)
     if not one_per_session:
-        write_list(listfile, pending, out)
-        session(listfile, "astar_jobs", timeout=CAP * (len(pending) + 1) + SLACK)
+        while pending:
+            write_list(listfile, pending, out)
+            before = runs(out)
+            if session(listfile, "astar_jobs", timeout=CAP + SLACK, watch=Path(out)) != "killed":
+                return
+            after = runs(out)                         # the hung job: the first one this session wrote no line for
+            hung = next((j for j in pending if after.get(j["name"]) == before.get(j["name"])), None)
+            if hung is None:
+                return
+            killed_line(out, hung["name"], len(hung["keep"]), CAP + SLACK)
+            pending = [j for j in pending if j["name"] not in finished(out)]
         return
     flags = []
     for j in jobs:
@@ -76,5 +92,5 @@ def run_jobs(jobs, out, listfile, label, one_per_session=False, stop=STOP):
             t0 = time.perf_counter()
             if session(listfile, "astar_jobs", timeout=CAP + SLACK) == "killed":
                 killed_line(out, j["name"], len(j["keep"]), time.perf_counter() - t0)
-            done = runs(out)
-        flags.append(at_limit(done.get(j["name"])))
+            done = finished(out)
+        flags.append(at_limit(runs(out).get(j["name"])))

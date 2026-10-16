@@ -8,8 +8,9 @@ function astar_jobs(jobfile)
 %               (H in pixels, row-major) mapped into that frame and scaled to h33 = 1
 % An untimed warm-up first, on the first job's first min(40, n) points with the limit 10 s. Appends one JSON line per
 % job to the list's results file: name, n, limit, set (the consensus set, 0-based indices into the full instance),
-% consensus, time (the solver's clock), hit_limit, nodes, nodibp, h_init, ub_init, level_max and model (theta, or H in
-% pixels row-major), or error if the solver throws.
+% consensus, time (the solver's clock), hit_limit (the solver's message, or time at the limit), nodes, nodibp, h_init,
+% ub_init, level_max and model (theta, or H in pixels row-major), or error if the solver throws. A run at the limit
+% has set, consensus and model null.
 % Usage: matlab -singleCompThread -batch "addpath('matlab'); astar_jobs('results/jobs/surv_d8_t50.json')"
 here = fileparts(mfilename('fullpath'));
 ext = fullfile(here, '..', 'external');
@@ -29,9 +30,13 @@ for i = 1:numel(jobs)
         P = build(J, keep);
         [txt, sol, outl, nodes, hInit, ubInit, levelMax, nodibp, secs] = solve(P, J.cap);
         inl = setdiff(1:numel(keep), outl);
-        r.set = keep(inl) - 1; r.consensus = numel(inl); r.time = secs; r.hit_limit = contains(txt, 'reaching time limit');
+        r.set = num2cell(keep(inl) - 1); r.consensus = numel(inl); r.time = secs;
+        r.hit_limit = contains(txt, 'reaching time limit') || secs >= J.cap;
         r.nodes = nodes; r.nodibp = nodibp; r.h_init = hInit; r.ub_init = ubInit; r.level_max = levelMax;
         r.model = model(P, sol);
+        if r.hit_limit                      % no answer: at the limit the solver returns the node it was expanding
+            r.set = NaN; r.consensus = NaN; r.model = NaN;
+        end
         fprintf('%s: consensus %d of %d, %.2f s, limit hit %d, nodes %d\n', J.name, r.consensus, r.n, secs, ...
             r.hit_limit, nodes);
     catch e

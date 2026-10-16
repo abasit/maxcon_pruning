@@ -43,13 +43,15 @@ def program(G, h, owner, alive, k, ubar, M, gauge=None):
 
 def test(G, h, owner, alive, k, ubar, M, cap, gauge=None):
     """One test of point k: Gurobi on one thread, seed 0, at most cap seconds, stopping at the first solution. Returns
-    the status ('removed', 'incumbent', 'timeout' or 'error'), the incumbent's theta or None, the seconds (building
-    the model included) and the branch-and-bound nodes. DualReductions 0 makes Gurobi report an infeasible program as
-    infeasible rather than as infeasible or unbounded. A Gurobi error, such as a model larger than a size-limited
-    licence allows, is printed and counts as 'error'."""
+    the status ('removed', 'incumbent', 'timeout', 'error' for any other end of the solve, or 'gurobi-error' when
+    Gurobi raises, as for a model larger than a size-limited licence allows, printed), the incumbent's theta or None,
+    the seconds (building the model included), the branch-and-bound nodes and Gurobi's own Runtime (None when it
+    raised). Gurobi's limit is wall-clock time, so a Runtime well above the seconds shows the machine slept during
+    the test. DualReductions 0 makes Gurobi report an infeasible program as infeasible rather than as infeasible or
+    unbounded."""
     t0 = time.perf_counter()
     A, lo, up, p, nz = program(G, h, owner, alive, k, ubar, M, gauge)
-    m, theta, nodes = gp.Model(), None, 0
+    m, theta, nodes, runtime = gp.Model(), None, 0, None
     try:
         for opt, val in (("OutputFlag", 0), ("Threads", 1), ("Seed", 0), ("TimeLimit", cap), ("SolutionLimit", 1),
                          ("DualReductions", 0)):
@@ -63,7 +65,7 @@ def test(G, h, owner, alive, k, ubar, M, cap, gauge=None):
         if fin_lo.any():
             m.addMConstr(A[fin_lo], v, ">", lo[fin_lo])
         m.optimize()
-        nodes = int(m.NodeCount)
+        nodes, runtime = int(m.NodeCount), float(m.Runtime)
         if m.Status == gp.GRB.INFEASIBLE:
             status = "removed"
         elif m.SolCount > 0:
@@ -74,9 +76,9 @@ def test(G, h, owner, alive, k, ubar, M, cap, gauge=None):
             status = "error"
     except gp.GurobiError as e:
         print(f"GORE: Gurobi error on point {k}: {e}", flush=True)
-        status = "error"
+        status = "gurobi-error"
     m.dispose()
-    return status, theta, time.perf_counter() - t0, nodes
+    return status, theta, time.perf_counter() - t0, nodes, runtime
 
 
 def run(P, model, m0, T, M, cap):
@@ -89,15 +91,16 @@ def run(P, model, m0, T, M, cap):
     alive, m, tests = np.ones(n, bool), m0, []
     for k in cand:
         idx = np.flatnonzero(alive)
-        status, theta, secs, nodes = test(G, h, owner, idx, k, len(idx) - m, M, cap, gauge)
+        status, theta, secs, nodes, runtime = test(G, h, owner, idx, k, len(idx) - m, M, cap, gauge)
         if status == "removed":
             alive[k] = False
         elif status == "incumbent":                    # Condition 2, verified in the exact residual
             m = max(m, int((verify(theta) & alive).sum()))
-        tests.append([k, status, round(secs, 3), nodes])
+        tests.append([k, status, round(secs, 3), nodes, None if runtime is None else round(runtime, 3)])
     removed = sorted(x[0] for x in tests if x[1] == "removed")
     return dict(n=n, T=T, M=M, cap=cap, m0=m0, m0_final=m, candidates=len(cand), tests=tests,
                 removed=removed, n_removed=len(removed), timeouts=sum(x[1] == "timeout" for x in tests),
-                incumbents=sum(x[1] == "incumbent" for x in tests), errors=sum(x[1] == "error" for x in tests),
+                incumbents=sum(x[1] == "incumbent" for x in tests), errors=sum("error" in x[1] for x in tests),
+                gurobi_errors=sum(x[1] == "gurobi-error" for x in tests),
                 at_limit=bool(tests) and not removed and all(x[1] == "timeout" for x in tests),
                 seconds=time.perf_counter() - t0)

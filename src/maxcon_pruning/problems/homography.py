@@ -114,7 +114,8 @@ class Problem:
     """A homography instance: x1 and x2 (3 x n, pixels, last row 1) and the inlier threshold eps in pixels."""
 
     def __init__(self, x1, x2, eps):
-        self.x1, self.x2, self.eps, self.n = x1, x2, eps, x1.shape[1]
+        self.x1, self.x2 = x1 / x1[2], x2 / x2[2]          # last row 1, as the transfer error and GORE's rows need
+        self.eps, self.n = eps, x1.shape[1]
         self.p = 4                               # the minimal sample size; the pruning starts at level p + 2
 
     def test(self, S):
