@@ -8,12 +8,13 @@ function influence_jobs(jobfile)
 % minimax function (the basis of the Chebyshev fit of a set), by the job's problem:
 %   linear      the demos' functions (MaxConMBF_simple_example.m and bool_fn.m), with the Chebyshev fit of Chin et al.
 %               2015 that both call; both count a set as feasible when its value is < eps, where ours have <= eps
-%   homography  their code has none, so the fitting function is the pruning's L-infinity linear program (feasible
-%               unless linprog proves it infeasible), and the minimax function returns the matches with nonzero duals
-%               in the same program with t free, at least p + 1 of them
+%   homography  their code's homography version (WI_homography_linear.m) fits the linearised DLT rows, one row per
+%               coordinate; here the problem is ours instead, so the fitting function is the pruning's L-infinity
+%               linear program (feasible unless linprog proves it infeasible), and the minimax function returns the
+%               matches with nonzero duals in the same program with t free, at least p + 1 of them
 % Appends one JSON line per job and method to the list's results file: name, method, rep, seed, q, size, returned and
 % removed (0-based indices into the instance), n_removed, fevals (MBF-MaxCon only) and seconds, or error.
-% Usage: matlab -singleCompThread -batch "addpath('matlab'); influence_jobs('results/jobs/influence_authors.json')"
+% Usage: matlab -singleCompThread -batch "addpath('matlab'); influence_jobs('results/jobs/influence_rep01.json')"
 here = fileparts(mfilename('fullpath'));
 ext = fullfile(here, '..', 'external');
 addpath(fullfile(ext, 'MBF-MaxCon', 'maxcon_BMF'));

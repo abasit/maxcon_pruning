@@ -51,8 +51,9 @@ def test(G, h, owner, alive, k, ubar, M, cap, gauge=None):
     unbounded."""
     t0 = time.perf_counter()
     A, lo, up, p, nz = program(G, h, owner, alive, k, ubar, M, gauge)
-    m, theta, nodes, runtime = gp.Model(), None, 0, None
+    m, theta, nodes, runtime = None, None, 0, None
     try:
+        m = gp.Model()
         for opt, val in (("OutputFlag", 0), ("Threads", 1), ("Seed", 0), ("TimeLimit", cap), ("SolutionLimit", 1),
                          ("DualReductions", 0)):
             m.setParam(opt, val)
@@ -77,7 +78,8 @@ def test(G, h, owner, alive, k, ubar, M, cap, gauge=None):
     except gp.GurobiError as e:
         print(f"GORE: Gurobi error on point {k}: {e}", flush=True)
         status = "gurobi-error"
-    m.dispose()
+    if m is not None:
+        m.dispose()
     return status, theta, time.perf_counter() - t0, nodes, runtime
 
 

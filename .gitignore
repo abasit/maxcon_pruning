@@ -4,3 +4,6 @@ __pycache__/
 .DS_Store
 results/
 archive/
+data/
+instances/synthetic/
+results_pre_freeze_2026-10-17/

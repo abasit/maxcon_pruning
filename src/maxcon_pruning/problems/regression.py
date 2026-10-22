@@ -17,7 +17,7 @@ from itertools import combinations
 import numpy as np
 from scipy.optimize import linprog
 
-GROW_MAX = 10                                     # line 6 of Algorithm 1: refits per growth at most
+GROW_MAX = 10                                     # line 9 of Algorithm 1: refits per growth at most
 TOL = 1e-6                                        # relative tolerance on eps of the infeasibility decisions
 
 

@@ -10,7 +10,11 @@ function astar_jobs(jobfile)
 % job to the list's results file: name, n, limit, set (the consensus set, 0-based indices into the full instance),
 % consensus, time (the solver's clock), hit_limit (the solver's message, or time at the limit), nodes, nodibp, h_init,
 % ub_init, level_max and model (theta, or H in pixels row-major), or error if the solver throws. A run at the limit
-% has set, consensus and model null.
+% has set, consensus and model null. A run within the limit whose model is not finite (linearFitV2 can return NaN on
+% repeated rows) keeps its fields and gets error too, so that it runs again. With the list's stop, the list ends once
+% that many jobs in a row are at the limit:
+% a job with skip true has a line already, is not run, and counts by its at_limit; a job in error counts as not at the
+% limit.
 % Usage: matlab -singleCompThread -batch "addpath('matlab'); astar_jobs('results/jobs/surv_d8_t50.json')"
 here = fileparts(mfilename('fullpath'));
 ext = fullfile(here, '..', 'external');
@@ -20,11 +24,24 @@ sd = fullfile(ext, 'MBF-MaxCon', 'linearASTAR', 'sedumi-master'); addpath(sd, fu
 warning('off', 'all');
 L = jsondecode(fileread(jobfile));
 jobs = L.jobs; if ~iscell(jobs), jobs = num2cell(jobs); end
-J = jobs{1}; keep = J.keep(:)' + 1;
+stop = []; if isfield(L, 'stop'), stop = L.stop; end                              % [] for no stop
+skip = cellfun(@(J) isfield(J, 'skip') && J.skip, jobs);
+k = find(~skip, 1); if isempty(k), k = 1; end
+J = jobs{k}; keep = J.keep(:)' + 1;
 try, solve(build(J, keep(1:min(40, end))), 10); catch, end                        % warm-up, untimed
-fprintf('%s: %d jobs; threads %d\n', jobfile, numel(jobs), maxNumCompThreads);
+fprintf('%s: %d jobs, %d to run; threads %d\n', jobfile, numel(jobs), sum(~skip), maxNumCompThreads);
+streak = 0;                                                                       % jobs in a row at the limit
 for i = 1:numel(jobs)
-    J = jobs{i}; keep = J.keep(:)' + 1;
+    if ~isempty(stop) && streak >= stop
+        fprintf('%s: %d runs in a row at the limit, the rest is not run\n', jobfile, stop);
+        break
+    end
+    J = jobs{i};
+    if skip(i)
+        if J.at_limit, streak = streak + 1; else, streak = 0; end
+        continue
+    end
+    keep = J.keep(:)' + 1;
     r = struct('name', J.name, 'n', numel(keep), 'limit', J.cap);
     try
         P = build(J, keep);
@@ -36,13 +53,20 @@ for i = 1:numel(jobs)
         r.model = model(P, sol);
         if r.hit_limit                      % no answer: at the limit the solver returns the node it was expanding
             r.set = NaN; r.consensus = NaN; r.model = NaN;
+        elseif any(~isfinite(r.model))      % no answer either
+            r.error = 'the solver returned a model that is not finite';
         end
-        fprintf('%s: consensus %d of %d, %.2f s, limit hit %d, nodes %d\n', J.name, r.consensus, r.n, secs, ...
-            r.hit_limit, nodes);
+        if isfield(r, 'error')
+            fprintf('%s: ERROR %s (consensus %d of %d, %.2f s)\n', J.name, r.error, r.consensus, r.n, secs);
+        else
+            fprintf('%s: consensus %d of %d, %.2f s, limit hit %d, nodes %d\n', J.name, r.consensus, r.n, secs, ...
+                r.hit_limit, nodes);
+        end
     catch e
         r.error = e.message; fprintf('%s: ERROR %s\n', J.name, e.message);
     end
     fid = fopen(L.out, 'a'); fprintf(fid, '%s\n', jsonencode(r)); fclose(fid);
+    if ~isfield(r, 'error') && r.hit_limit, streak = streak + 1; else, streak = 0; end
 end
 end
 
